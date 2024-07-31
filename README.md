@@ -10,7 +10,7 @@ Batching and parallelization helper for .NET.
    await using var pipeline = PipelineBuilder.Create<string>()
        .Workers(4, pipe => pipe
            .Step(async arg => await LoadImageFromPath(arg.Item))
-           .Step(async image => await CropImage(input, 128, 128)))
+           .Step(async image => await CropImage(image, 128, 128)))
        .Batch(batchSize: 16, maxWaitTime: TimeSpan.FromMilliseconds(100), pipe => pipe
            .Step(async images => await GetImageEmbeddingsBatch(images))
            .Step(async embeddings => await NormalizeEmbeddingsBatch(embeddings))

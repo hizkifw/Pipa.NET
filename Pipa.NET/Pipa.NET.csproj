@@ -2,7 +2,25 @@
 
   <PropertyGroup>
     <TargetFramework>netstandard2.1</TargetFramework>
+    <PackageId>Pipa.NET</PackageId>
+    <Version>0.0.1</Version>
+    <Authors>Hizkia Felix</Authors>
+    <Product>Pipa.NET</Product>
+    <Description>Batching and parallelization helper for .NET</Description>
+    <Summary>Pipa.NET is a batching and parallelization helper for .NET</Summary>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <PackageProjectUrl>https://github.com/hizkifw/Pipa.NET</PackageProjectUrl>
+    <PackageTags>async batching parallelization</PackageTags>
+    <PublishRepositoryUrl>true</PublishRepositoryUrl>
+    <RootNamespace>Pipa.NET</RootNamespace>
+    <AssemblyName>Pipa.NET</AssemblyName>
   </PropertyGroup>
+
+  <ItemGroup>
+    <None Include="..\README.md" Pack="true" PackagePath="\" />
+    <None Include="..\LICENSE" Pack="true" PackagePath="\" />
+  </ItemGroup>
 
   <ItemGroup>
     <PackageReference Include="System.Threading.Channels" Version="8.0.0" />
