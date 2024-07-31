@@ -9,7 +9,7 @@ Batching and parallelization helper for .NET.
 
    var pipeline = PipelineBuilder.Create<string>()
        .Workers(4, pipe => pipe
-           .Step(path => LoadImageFromPath(path))
+           .Step(arg => LoadImageFromPath(arg.Item))
            .Step(image => CropImage(input, 128, 128)))
        .Batch(batchSize: 16, maxWaitTime: TimeSpan.FromMilliseconds(100), pipe => pipe
            .Step(images => GetImageEmbeddingsBatch(images))
