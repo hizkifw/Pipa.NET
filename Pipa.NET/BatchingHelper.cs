@@ -12,12 +12,12 @@ namespace Pipa.NET
         public Task<O> ProcessAsync(I input);
     }
 
-    public class BatchingHelper<I, O> : IBatchingHelper<I, O>, IDisposable
+    public class BatchingHelper<I, O> : IBatchingHelper<I, O>, IDisposable, IAsyncDisposable
     {
         private int _batchSize = 1, _parallelism = 1;
         private TimeSpan _maxWaitTime = TimeSpan.FromSeconds(1);
         private readonly Func<int, I[], Task<O[]>> _batchProcessor;
-        private readonly Channel<(I input, TaskCompletionSource<O> tcs)> _queue;
+        private Channel<(I input, TaskCompletionSource<O> tcs)> _queue;
         private CancellationTokenSource _cts;
         private Task[] _loopTasks;
         private bool _isStarted = false;
@@ -61,26 +61,24 @@ namespace Pipa.NET
             return this;
         }
 
-        public void Dispose()
+        protected async ValueTask DisposeAsyncCore()
         {
-            Dispose(true);
-            GC.SuppressFinalize(this);
-        }
-
-        protected virtual void Dispose(bool disposing)
-        {
-            if (_disposed) return;
-
-            if (disposing)
+            if (_cts != null)
             {
-                try
-                {
-                    _cts.Cancel();
-                    Task.WhenAll(_loopTasks).Wait();
-                }
-                catch { }
+                _cts.Cancel();
                 _cts.Dispose();
+                _cts = null;
+            }
 
+            if (_loopTasks != null)
+            {
+                try { await Task.WhenAll(_loopTasks); }
+                catch { }
+                _loopTasks = null;
+            }
+
+            if (_queue != null)
+            {
                 if (_queue.Writer.TryComplete())
                 {
                     while (_queue.Reader.TryRead(out var item))
@@ -88,9 +86,20 @@ namespace Pipa.NET
                         item.tcs.TrySetCanceled();
                     }
                 }
+                _queue = null;
             }
+        }
 
-            _disposed = true;
+        public void Dispose()
+        {
+            DisposeAsyncCore().AsTask().Wait();
+            GC.SuppressFinalize(this);
+        }
+
+        public async ValueTask DisposeAsync()
+        {
+            await DisposeAsyncCore().ConfigureAwait(false);
+            GC.SuppressFinalize(this);
         }
 
         public async Task<O> ProcessAsync(I input)

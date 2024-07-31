@@ -1,18 +1,19 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.ComponentModel;
 using System.Threading;
 using System.Threading.Tasks;
 
 namespace Pipa.NET
 {
 
-    public class Pipeline<TIn, TOut> : IDisposable
+    public class Pipeline<TIn, TOut> : IDisposable, IAsyncDisposable
     {
-        private readonly CancellationTokenSource _cts;
-        private readonly Task[] _tasks;
-        private readonly Func<TIn, TOut> _step;
+        private CancellationTokenSource _cts;
+        private Task[] _tasks;
+        private Func<TIn, Task<TOut>> _step;
 
-        public Pipeline(Func<TIn, TOut> step, Func<CancellationToken, Task>[] workers)
+        public Pipeline(Func<TIn, Task<TOut>> step, Func<CancellationToken, Task>[] workers)
         {
             _step = step;
 
@@ -24,22 +25,41 @@ namespace Pipa.NET
             }
         }
 
-        public void Dispose()
+        protected virtual async ValueTask DisposeAsyncCore()
         {
-            try
+            if (_cts != null)
             {
                 _cts.Cancel();
-                Task.WaitAll(_tasks);
                 _cts.Dispose();
+                _cts = null;
             }
-            catch
+
+            if (_tasks != null)
             {
+                try { await Task.WhenAll(_tasks); }
+                catch { }
+                _tasks = null;
             }
+
+            if (_step != null)
+                _step = null;
         }
 
-        public TOut Execute(TIn input)
+        public void Dispose()
         {
-            return _step(input);
+            DisposeAsyncCore().AsTask().Wait();
+            GC.SuppressFinalize(this);
+        }
+
+        public async ValueTask DisposeAsync()
+        {
+            await DisposeAsyncCore().ConfigureAwait(false);
+            GC.SuppressFinalize(this);
+        }
+
+        public async Task<TOut> ExecuteAsync(TIn input)
+        {
+            return await _step(input);
         }
     }
 
@@ -53,14 +73,16 @@ namespace Pipa.NET
 
     public class PipelineBuilder<TIn, TOut>
     {
-        private List<Func<CancellationToken, Task>> _workers = new List<Func<CancellationToken, Task>>();
-        private List<Func<object, object>> _steps = new List<Func<object, object>> { (object input) => input };
+        private readonly List<Func<CancellationToken, Task>> _workers;
+        private readonly List<Func<object, Task<object>>> _steps;
 
         public PipelineBuilder()
         {
+            _workers = new List<Func<CancellationToken, Task>>();
+            _steps = new List<Func<object, Task<object>>>();
         }
 
-        private PipelineBuilder(List<Func<CancellationToken, Task>> workers, List<Func<object, object>> steps)
+        private PipelineBuilder(List<Func<CancellationToken, Task>> workers, List<Func<object, Task<object>>> steps)
         {
             _workers = workers;
             _steps = steps;
@@ -71,24 +93,35 @@ namespace Pipa.NET
             return new PipelineBuilder<NewIn, NewOut>(pipeline._workers, pipeline._steps);
         }
 
-        private void PushStep<TResult>(Func<TOut, TResult> step)
+        private void PushStep<TResult>(Func<TOut, Task<TResult>> step)
         {
-            var lastStep = _steps[^1];
-            Func<object, object> newStep = (object input) => step((TOut)lastStep(input));
-            _steps.Add(newStep);
+            if (_steps.Count > 0)
+            {
+                var lastStep = _steps[^1];
+                _steps.Add(async (object input) => await step((TOut)await lastStep(input)));
+            }
+            else
+            {
+                _steps.Add(async (object input) => await step((TOut)input));
+            }
         }
 
-        public PipelineBuilder<TIn, TResult> Step<TResult>(Func<TOut, TResult> step)
+        public PipelineBuilder<TIn, TResult> Step<TResult>(Func<TOut, Task<TResult>> step)
         {
             PushStep(step);
             return PipelineBuilder<TIn, TResult>.From<TIn, TOut, TIn, TResult>(this);
+        }
+
+        public PipelineBuilder<TIn, TResult> StepSync<TResult>(Func<TOut, TResult> step)
+        {
+            return Step((TOut input) => Task.FromResult(step(input)));
         }
 
         public PipelineBuilder<TIn, TResult> Batch<TResult>(int batchSize, TimeSpan maxWaitTime, Func<PipelineBuilder<TOut[], TOut[]>, PipelineBuilder<TOut[], TResult[]>> pipeline)
         {
             var pipe = pipeline(PipelineBuilder.Create<TOut[]>()).Build();
 
-            var batcher = new BatchingHelper<TOut, TResult>(batchSize, (int id, TOut[] inputs) => Task.FromResult(pipe.Execute(inputs)))
+            var batcher = new BatchingHelper<TOut, TResult>(batchSize, async (int id, TOut[] inputs) => await pipe.ExecuteAsync(inputs))
                 .WithMaxWaitTime(maxWaitTime);
 
             _workers.Add(async (CancellationToken ct) =>
@@ -98,11 +131,11 @@ namespace Pipa.NET
                 try { await Task.Delay(Timeout.Infinite, ct); }
                 catch (OperationCanceledException) { }
 
-                batcher.Dispose();
-                pipe.Dispose();
+                await batcher.DisposeAsync();
+                await pipe.DisposeAsync();
             });
 
-            PushStep((TOut input) => batcher.ProcessAsync(input).Result);
+            PushStep(batcher.ProcessAsync);
 
             return PipelineBuilder<TIn, TResult>.From<TIn, TOut, TIn, TResult>(this);
         }
@@ -111,7 +144,7 @@ namespace Pipa.NET
         {
             var pipe = pipeline(PipelineBuilder.Create<(int, TOut)>()).Build();
 
-            var batcher = new BatchingHelper<TOut, TResult>(1, (int id, TOut[] inputs) => Task.FromResult(new TResult[] { pipe.Execute((id, inputs[0])) }))
+            var batcher = new BatchingHelper<TOut, TResult>(1, async (int id, TOut[] inputs) => new TResult[] { await pipe.ExecuteAsync((id, inputs[0])) })
                 .WithParallelism(workers);
 
             _workers.Add(async (CancellationToken ct) =>
@@ -121,18 +154,18 @@ namespace Pipa.NET
                 try { await Task.Delay(Timeout.Infinite, ct); }
                 catch (OperationCanceledException) { }
 
-                batcher.Dispose();
-                pipe.Dispose();
+                await batcher.DisposeAsync();
+                await pipe.DisposeAsync();
             });
 
-            PushStep((TOut input) => batcher.ProcessAsync(input).Result);
+            PushStep(batcher.ProcessAsync);
 
             return PipelineBuilder<TIn, TResult>.From<TIn, TOut, TIn, TResult>(this);
         }
 
         public Pipeline<TIn, TOut> Build()
         {
-            return new Pipeline<TIn, TOut>((TIn input) => (TOut)_steps[^1](input), _workers.ToArray());
+            return new Pipeline<TIn, TOut>(async (TIn input) => (TOut)await _steps[^1](input), _workers.ToArray());
         }
     }
 }

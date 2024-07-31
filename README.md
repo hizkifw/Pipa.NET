@@ -7,13 +7,13 @@ Batching and parallelization helper for .NET.
    ```csharp
    using Pipa.NET;
 
-   var pipeline = PipelineBuilder.Create<string>()
+   await using var pipeline = PipelineBuilder.Create<string>()
        .Workers(4, pipe => pipe
-           .Step(arg => LoadImageFromPath(arg.Item))
-           .Step(image => CropImage(input, 128, 128)))
+           .Step(async arg => await LoadImageFromPath(arg.Item))
+           .Step(async image => await CropImage(input, 128, 128)))
        .Batch(batchSize: 16, maxWaitTime: TimeSpan.FromMilliseconds(100), pipe => pipe
-           .Step(images => GetImageEmbeddingsBatch(images))
-           .Step(embeddings => NormalizeEmbeddingsBatch(embeddings))
+           .Step(async images => await GetImageEmbeddingsBatch(images))
+           .Step(async embeddings => await NormalizeEmbeddingsBatch(embeddings))
        )
        .Build();
    ```
@@ -23,5 +23,8 @@ Batching and parallelization helper for .NET.
 
    ```csharp
    // Get a single embedding from a single image path
-   var normalizedEmbeddings = pipeline.Execute(imagePath);
+   var normalizedEmbeddings = await pipeline.ExecuteAsync(imagePath);
    ```
+
+3. Dispose of the pipeline when you're done using it, to free up resources and
+   stop background tasks.
