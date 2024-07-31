@@ -16,14 +16,14 @@ namespace Pipa.NET
     {
         private int _batchSize = 1, _parallelism = 1;
         private TimeSpan _maxWaitTime = TimeSpan.FromSeconds(1);
-        private readonly Func<I[], Task<O[]>> _batchProcessor;
+        private readonly Func<int, I[], Task<O[]>> _batchProcessor;
         private readonly Channel<(I input, TaskCompletionSource<O> tcs)> _queue;
         private CancellationTokenSource _cts;
         private Task[] _loopTasks;
         private bool _isStarted = false;
         private bool _disposed = false;
 
-        public BatchingHelper(int batchSize, Func<I[], Task<O[]>> batchProcessor)
+        public BatchingHelper(int batchSize, Func<int, I[], Task<O[]>> batchProcessor)
         {
             _batchSize = batchSize;
             _batchProcessor = batchProcessor;
@@ -56,7 +56,7 @@ namespace Pipa.NET
             _cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
             _loopTasks = new Task[_parallelism];
             for (var i = 0; i < _parallelism; i++)
-                _loopTasks[i] = Loop(_cts.Token);
+                _loopTasks[i] = Loop(i, _cts.Token);
 
             return this;
         }
@@ -103,7 +103,7 @@ namespace Pipa.NET
             return await tcs.Task;
         }
 
-        private async Task Loop(CancellationToken ct)
+        private async Task Loop(int id, CancellationToken ct)
         {
             while (!ct.IsCancellationRequested)
             {
@@ -129,7 +129,7 @@ namespace Pipa.NET
                 try
                 {
                     // Process items in batch
-                    var results = await _batchProcessor(batch.Select(i => i.input).ToArray());
+                    var results = await _batchProcessor(id, batch.Select(i => i.input).ToArray());
 
                     var i = 0;
                     foreach (var result in results)

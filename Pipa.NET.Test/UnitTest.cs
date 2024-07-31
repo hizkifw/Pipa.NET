@@ -51,30 +51,33 @@ public class UnitTest
     [Fact]
     public void TestWorkers()
     {
+        int[] nCalls = [0, 0];
         var pipeline = PipelineBuilder.Create<int>()
             .Step(i => i * 100)
-            .Workers(4, pipe => pipe.Step(i =>
+            .Workers(2, pipe => pipe.Step(arg =>
             {
-                Thread.Sleep(i);
-                return $"wow! {i}";
+                nCalls[arg.ThreadId]++;
+                Thread.Sleep(arg.Item);
+                return $"wow! {arg.Item}";
             }))
             .Build();
 
         var sw = Stopwatch.StartNew();
         var one = pipeline.Execute(1);
         sw.Stop();
-        Assert.InRange(sw.ElapsedMilliseconds, 99, 105);
+        Assert.Equal("wow! 100", one);
+        Assert.Equal(1, nCalls[0] + nCalls[1]);
 
-        sw.Restart();
+        nCalls[0] = 0;
+        nCalls[1] = 0;
         Task.WaitAll(
-            Task.Run(() => pipeline.Execute(1)),
-            Task.Run(() => pipeline.Execute(1)),
-            Task.Run(() => pipeline.Execute(1)),
-            Task.Run(() => pipeline.Execute(2)),
-            Task.Run(() => pipeline.Execute(1)),
-            Task.Run(() => pipeline.Execute(1))
+            Task.Run(() => Assert.Equal("wow! 100", pipeline.Execute(1))),
+            Task.Run(() => Assert.Equal("wow! 200", pipeline.Execute(2))),
+            Task.Run(() => Assert.Equal("wow! 100", pipeline.Execute(1)))
         );
-        sw.Stop();
-        Assert.InRange(sw.ElapsedMilliseconds, 199, 205);
+        Assert.Equal(3, nCalls[0] + nCalls[1]);
+        Assert.NotEqual(nCalls[0], nCalls[1]);
+        Assert.NotEqual(0, nCalls[0]);
+        Assert.NotEqual(0, nCalls[1]);
     }
 }

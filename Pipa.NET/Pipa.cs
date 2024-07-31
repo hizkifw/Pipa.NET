@@ -88,7 +88,7 @@ namespace Pipa.NET
         {
             var pipe = pipeline(PipelineBuilder.Create<TOut[]>()).Build();
 
-            var batcher = new BatchingHelper<TOut, TResult>(batchSize, (TOut[] inputs) => Task.FromResult(pipe.Execute(inputs)))
+            var batcher = new BatchingHelper<TOut, TResult>(batchSize, (int id, TOut[] inputs) => Task.FromResult(pipe.Execute(inputs)))
                 .WithMaxWaitTime(maxWaitTime);
 
             _workers.Add(async (CancellationToken ct) =>
@@ -107,11 +107,11 @@ namespace Pipa.NET
             return PipelineBuilder<TIn, TResult>.From<TIn, TOut, TIn, TResult>(this);
         }
 
-        public PipelineBuilder<TIn, TResult> Workers<TResult>(int workers, Func<PipelineBuilder<TOut, TOut>, PipelineBuilder<TOut, TResult>> pipeline)
+        public PipelineBuilder<TIn, TResult> Workers<TResult>(int workers, Func<PipelineBuilder<(int, TOut), (int ThreadId, TOut Item)>, PipelineBuilder<(int, TOut), TResult>> pipeline)
         {
-            var pipe = pipeline(PipelineBuilder.Create<TOut>()).Build();
+            var pipe = pipeline(PipelineBuilder.Create<(int, TOut)>()).Build();
 
-            var batcher = new BatchingHelper<TOut, TResult>(1, (TOut[] inputs) => Task.FromResult(new TResult[] { pipe.Execute(inputs[0]) }))
+            var batcher = new BatchingHelper<TOut, TResult>(1, (int id, TOut[] inputs) => Task.FromResult(new TResult[] { pipe.Execute((id, inputs[0])) }))
                 .WithParallelism(workers);
 
             _workers.Add(async (CancellationToken ct) =>
