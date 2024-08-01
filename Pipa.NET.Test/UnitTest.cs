@@ -80,4 +80,34 @@ public class UnitTest
         Assert.NotEqual(0, nCalls[0]);
         Assert.NotEqual(0, nCalls[1]);
     }
+
+    [Fact]
+    public async Task TestUnroll()
+    {
+        IEnumerable<((string name, int[] scores) input, int[] expected)> data =
+        [
+            (("Alice", [10, 20, 30]), [20, 40, 60]),
+            (("Bob", [40, 50, 60]), [80, 100, 120]),
+            (("Charlie", [70, 80, 90]), [140, 160, 180])
+        ];
+
+        await using var pipeline = PipelineBuilder.Create<(string name, int[] scores)>()
+            .Unroll(
+                unroll: it => it.scores,
+                pipeline: p => p.StepSync(it => it.Item * 2),
+                roll: (it) =>
+                {
+                    it.Input.scores = it.Results.ToArray();
+                    return it.Input;
+                }
+            )
+            .Build();
+
+        foreach (var (input, expected) in data)
+        {
+            var (name, scores) = await pipeline.ExecuteAsync(input);
+            Assert.Equal(expected, scores);
+            Assert.Equal(input.name, name);
+        }
+    }
 }

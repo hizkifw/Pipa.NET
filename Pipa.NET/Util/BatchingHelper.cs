@@ -5,7 +5,7 @@ using System.Threading;
 using System.Threading.Channels;
 using System.Threading.Tasks;
 
-namespace Pipa.NET
+namespace Pipa.NET.Util
 {
     public interface IBatchingHelper<I, O>
     {
@@ -15,13 +15,12 @@ namespace Pipa.NET
     public class BatchingHelper<I, O> : IBatchingHelper<I, O>, IDisposable, IAsyncDisposable
     {
         private int _batchSize = 1, _parallelism = 1;
-        private TimeSpan _maxWaitTime = TimeSpan.FromSeconds(1);
+        private TimeSpan _maxWaitTime = TimeSpan.FromMilliseconds(100);
         private readonly Func<int, I[], Task<O[]>> _batchProcessor;
         private Channel<(I input, TaskCompletionSource<O> tcs)> _queue;
         private CancellationTokenSource _cts;
         private Task[] _loopTasks;
         private bool _isStarted = false;
-        private bool _disposed = false;
 
         public BatchingHelper(int batchSize, Func<int, I[], Task<O[]>> batchProcessor)
         {
@@ -56,7 +55,12 @@ namespace Pipa.NET
             _cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
             _loopTasks = new Task[_parallelism];
             for (var i = 0; i < _parallelism; i++)
-                _loopTasks[i] = Loop(i, _cts.Token);
+            {
+                // Create a local copy of `i` as it will be captured by the
+                // lambda expression and its value will change in the next iteration
+                var id = i;
+                _loopTasks[i] = Task.Run(() => Loop(id, _cts.Token));
+            }
 
             return this;
         }
